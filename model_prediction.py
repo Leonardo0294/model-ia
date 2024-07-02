@@ -6,6 +6,7 @@ import numpy as np
 import joblib
 import json
 import os
+from tkinter import messagebox  # Para mostrar mensajes de error
 
 # Definir 'features' globalmente para la predicción meteorológica
 features_weather = [
@@ -16,11 +17,27 @@ features_weather = [
     'Velocidad de Viento [m/s] - promedio'
 ]
 
-def load_data_from_csv(file_path):
-    print("Cargando datos desde CSV...")
-    df = pd.read_csv(file_path, delimiter=';', encoding='utf-8', decimal=',')
-    df['Fecha / Hora'] = pd.to_datetime(df['Fecha / Hora'], dayfirst=True, errors='coerce')
-    df = df.dropna(subset=['Fecha / Hora'])
+def load_data_from_json(file_path):
+    print("Cargando datos desde JSON...")
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    # Convertir los datos JSON en un DataFrame de pandas
+    records = []
+    for record in data:
+        flat_record = {
+            'Fecha / Hora': pd.to_datetime(record['date']['$date'], utc=True),
+            'Temperatura del aire HC [°C] - promedio': record['sensors']['hCAirTemperature']['avg'],
+            'Punto de Rocío [°C] - promedio': record['sensors']['dewPoint']['avg'],
+            'Radiación solar [W/m2] - promedio': record['sensors']['solarRadiation']['avg'],
+            'Humedad relativa HC [%] - promedio': record['sensors']['hCRelativeHumidity']['avg'],
+            'Velocidad de Viento [m/s] - promedio': record['sensors']['uSonicWindSpeed']['avg'],
+            'Dirección de Viento [deg]': record['sensors']['uSonicWindDir']['last'],
+            'Precipitación [mm]': record['sensors']['precipitation']['sum']
+        }
+        records.append(flat_record)
+    
+    df = pd.DataFrame(records)
     print(f"Datos cargados: {df.shape}")
     return df
 
@@ -66,7 +83,8 @@ def train_models(X_train, y_train_temp, y_train_precipitation, y_train_humidity,
 
 def predict_future_weather(models, df, future_date):
     print(f"Prediciendo para la fecha {future_date}...")
-    future_date = pd.to_datetime(future_date, format='%Y-%m-%d')
+    future_date = pd.to_datetime(future_date, format='%d-%m-%Y', utc=True)
+    df['Fecha / Hora'] = df['Fecha / Hora'].dt.tz_localize(None).dt.tz_localize('UTC')  # Convertir a UTC si no está tz-aware
     last_data = df[df['Fecha / Hora'] <= future_date].tail(1)
 
     if last_data.empty:
@@ -89,8 +107,8 @@ def save_predictions_to_json(predictions, future_date, file_name="predicciones.j
     print(f"Predicciones guardadas en {file_name}")
 
 def main():
-    file_path = 'station_data.csv'
-    df = load_data_from_csv(file_path)
+    file_path = 'RAFstationdata.json'
+    df = load_data_from_json(file_path)
     X_weather, y_temp, y_precipitation, y_humidity, y_wind_direction = preprocess_data_weather(df)
 
     X_train, X_test, y_train_temp, y_test_temp = train_test_split(X_weather, y_temp, test_size=0.2, random_state=42)
@@ -103,7 +121,7 @@ def main():
     root = Tk()
     root.title("Predicción Meteorológica Futura")
 
-    Label(root, text="Ingrese una fecha futura (YYYY-MM-DD):").pack()
+    Label(root, text="Ingrese una fecha futura (DD-MM-YYYY):").pack()
     entry_date = Entry(root)
     entry_date.pack()
 
@@ -113,6 +131,8 @@ def main():
     def predict_button_clicked():
         future_date = entry_date.get()
         try:
+            # Verificar el formato de la fecha
+            pd.to_datetime(future_date, format='%d-%m-%Y')
             predictions = predict_future_weather(models, df, future_date)
             result_text = f"Predicción para {future_date}:\n"
             result_text += f"Temperatura: {predictions['temperatura']:.2f} °C\n"
@@ -121,8 +141,8 @@ def main():
             result_text += f"Dirección del Viento: {predictions['direccion_viento']:.2f} grados"
             result_label.config(text=result_text)
             save_predictions_to_json(predictions, future_date)
-        except ValueError as e:
-            result_label.config(text=str(e))
+        except ValueError:
+            messagebox.showerror("Error de Formato", "Por favor, ingrese la fecha en el formato DD-MM-YYYY.")
 
     Button(root, text="Predecir", command=predict_button_clicked).pack()
 
